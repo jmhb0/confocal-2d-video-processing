@@ -1,0 +1,106 @@
+---
+mito:
+    seg: 
+        pipeline: 
+            AC: 
+                scaling_param: [0,14]
+            #G2:
+            #    sigma: 1.5
+            ES:
+                niter: 10
+                kappa: 1.2
+            F2: 
+                f2_param: [[1.0,0.14]] 
+            S:
+                min_size: 20
+        ops: 
+            inplace: False
+
+peroxy:
+    seg: 
+        pipeline: 
+            AC: 
+                scaling_param: [0,18]
+            G2:
+                sigma: 1
+            S2: 
+                s2_param: [[1.1,0.05]]
+            WD: {}
+            S:
+                min_size: 10
+                connectivity: 1
+        ops: 
+            inplace: False
+            
+lyso:
+    seg:
+        pipeline:
+            AC: 
+                scaling_param: [0,17]
+            G2:
+                sigma: 1
+            or_branch:
+                branch1:
+                    S2:
+                        s2_param: [[2.5,0.15]]  # [[2,0.1], [0.8,0.1]] 
+                branch2:
+                    F2:
+                        f2_param: [[1.6, 0.8]]
+            HF:
+                hole_min: 0
+                hole_max: 1200
+            S:
+                min_size: 20
+                connectivity: 1
+        ops: 
+            inplace: False
+
+golgi: 
+    seg:
+        pipeline:
+            AC:
+                scaling_param: [0,100]
+            G2:
+                sigma: 1.5
+            or_branch:
+                branch1:
+                    MO:
+                        global_thresh_method: tri
+                        object_minArea: 1200
+                        extra_criteria: True
+                    TT: 
+                        min_thickness: 3
+                        thin: 1
+                branch2:
+                    S2:
+                        s2_param: [[1.8 ,0.3]]
+            S:
+                min_size: 20
+                connectivity: 1
+        ops: 
+            inplace: False
+            
+er:
+    seg:
+        pipeline:
+            AC:
+                scaling_param: [0.5,11]
+            ES:
+                niter: 15    #
+                kappa: 1.2 
+                gamma: 0.1
+            #ES_aics: 
+            #    spacing: [1,1]
+            F2:
+                f2_param: [[1.4,0.05]]
+            S:
+                min_size: 20
+                connectivity: 1
+        ops: 
+            inplace: False
+
+
+
+            
+            
+            

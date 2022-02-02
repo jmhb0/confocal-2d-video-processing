@@ -1,0 +1,107 @@
+---
+mito:
+    seg: 
+        pipeline: 
+            AC: 
+                scaling_param: [0,23]
+            G2:
+                sigma: 1.5
+            #ES:
+            #    niter: 3
+            #    kappa: 1.2
+            F2: 
+                f2_param: [[1.4,0.15]] 
+            S:
+                min_size: 20
+        ops: 
+            inplace: False
+
+peroxy:
+    seg: 
+        pipeline: 
+            AC: 
+                scaling_param: [0,18]
+            G2:
+                sigma: 1
+            S2: 
+                s2_param: [[1.2,0.08]]
+            WD: {}
+            S:
+                min_size: 10
+                connectivity: 1
+        ops: 
+            inplace: False
+
+er:
+    seg:
+        pipeline:
+            AC:
+                scaling_param: [0.5,11]
+            ES:
+                niter: 20
+                kappa: 1.2 
+                gamma: 0.1
+            F2:
+                f2_param: [[1.0,0.10]]
+            S:
+                min_size: 20
+                connectivity: 1
+        ops: 
+            inplace: False
+
+golgi: 
+    seg:
+        pipeline:
+            AC:
+                scaling_param: [0,100]
+            G2:
+                sigma: 1
+            or_branch:
+                branch1:
+                    MO:
+                        global_thresh_method: tri
+                        object_minArea: 2000
+                        extra_criteria: True
+                    TT: 
+                        min_thickness: 3
+                        thin: 1
+                branch2:
+                    S2:
+                        s2_param: [[3 ,0.1]] # [[1.8 ,0.1],[9,0.1]]
+                #branch3:
+                #    F2:
+                #        f2_param: [[2, 0.2]]
+            HF:
+                hole_min: 0
+                hole_max: 1200
+            S:
+                min_size: 20
+                connectivity: 1
+        ops: 
+            inplace: False
+
+lyso:
+    seg:
+        pipeline:
+            AC: 
+                scaling_param: [0,17]
+            G2:
+                sigma: 2
+            or_branch:
+                branch1:
+                    S2:
+                        s2_param: [[6,0.1]]  # [[2,0.1], [0.8,0.1]] 
+                branch2:
+                    F2:
+                        f2_param: [[1.1, 0.25]]
+            HF:
+                hole_min: 0
+                hole_max: 3000
+            S:
+                min_size: 50
+                connectivity: 1
+        ops: 
+            inplace: False
+            
+            
+            
