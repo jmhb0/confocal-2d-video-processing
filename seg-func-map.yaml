@@ -1,0 +1,84 @@
+# YAML file map from segmentation function codes to function definition
+# Some of these are local files and assume we are in ${PROJECT_DIR}/img_pipeline/
+---
+### preprocessing methods
+# auto-contrast normalization
+AC: 
+    package: aicssegmentation.core.pre_processing_utils
+    func: intensity_normalization
+    params_default:
+        scaling_param: [0,20]
+
+# min-max normalization 
+MM:
+    package: aicssegmentation.core.pre_processing_utils
+    func: intensity_normalization
+    params_default:
+        scaling_param: None
+
+# 2d Gaussian blur
+G2: 
+    package: aicssegmentation.core.pre_processing_utils
+    func: image_smoothing_gaussian_slice_by_slice
+    params_default:
+        sigma: None
+
+# edge-preserving smoothing
+ES: 
+    package: util_es_smooth_2d
+    func: anisodiff
+    params_default:
+        niter: 2
+        kappa: 1.2
+        gamma: 0.1
+
+
+### segmentation core
+# 2d filament
+F2: 
+    package: aicssegmentation.core.vessel
+    func: filament_2d_wrapper
+    params_default:
+        f2_param: [[1,0.15]]
+# 2d spot/blob
+S2:
+    package: aicssegmentation.core.seg_dot
+    func: dot_2d_slice_by_slice_wrapper
+    params_default:
+        s2_param: [[1.8 ,0.03]]
+# masked object 
+MO: 
+    package: aicssegmentation.core.MO_threshold
+    func: MO
+    params_default:
+        global_thresh_method: tri
+        object_minArea: 1200
+# distance-based watershed
+WD: 
+    package: segmentation_core
+    func: watershed_2d_distance_transform
+    params_default: {}
+
+
+### post-processing
+S: 
+    package: skimage.morphology
+    func: remove_small_objects
+    params_default:
+        min_size: 15
+        connectivity: 1
+        in_place: True
+# hole-filling
+HF:
+    package: aicssegmentation.core.utils 
+    func: hole_filling
+    params_default:
+        hole_min: 0
+        hole_max: 1200
+# topology-preserved thinning
+TT: 
+    package: aicssegmentation.core.utils
+    func: topology_preserving_thinning
+    params_default:
+        min_thickness: 1.6
+        thin: 1
