@@ -7,6 +7,12 @@ The first is the notebooks, the second is the 'wrapper' that is used for the act
 
 The channel-testing folder is for notebooks for testing different hyperparams on particular images step-by-step in the pipeline, or for whole-pipeline results for sets of images.
 
+## config
+Home directory `config.yaml` should have project root_dir. 
+
+Put a piece of analysis in its own folder in `analyes`. 
+
+
 ## Config files 
 - AC: auto-contrast normalization 
 - MM: min-max normalization

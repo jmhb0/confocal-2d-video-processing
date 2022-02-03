@@ -69,9 +69,10 @@ def get_channel_idx_lookup(channel_names):
     """
     ch_lookup = {}
     # cananocial ordering should put nuclei last
-    for org in ['lyso','mito','golgi','peroxy','bodipy','residuals','nuclei']:
-        ch_lookup[org]=None
-        for i, ch in enumerate(channel_names):
+    # put 'er' earlier in the list to peroxy, else it will get confused
+    orgs = ['lyso','mito','golgi','peroxy','er','bodipy','residuals','nuclei']
+    for i, ch in enumerate(channel_names):
+        for org in orgs:
             if org in ch.lower():
                 ch_lookup[org]=i
                 break
