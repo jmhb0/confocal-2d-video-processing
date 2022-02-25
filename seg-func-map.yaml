@@ -67,7 +67,7 @@ S:
     params_default:
         min_size: 15
         connectivity: 1
-        in_place: True
+        in_place: False
 # hole-filling
 HF:
     package: aicssegmentation.core.utils 

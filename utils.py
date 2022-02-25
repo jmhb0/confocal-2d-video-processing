@@ -1,7 +1,13 @@
+import torch
+import torchvision
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import pandas as pd
 from aicsimageio import AICSImage
+import aicssegmentation 
+import numpy as np
 import pipeline_utils as pu
+import os
 
 left, right  = 0.0, 1.0    # the left side of the subplots of the figure
 bottom, top = 0.0, 1.0   # the bottom of the subplots of the figure
@@ -33,15 +39,14 @@ def animate_video(x_video, figsize=(10,10), axis_off=0):
     
     return ani 
 
-def get_img_and_seg(df_fnames, PATH_RESULTS, idx='WT-1-1', SEG_RUN_NAME="feb2", ):
+def get_img_and_seg(df_fnames, PATH_RESULTS, idx='WT-1-1' ):
     """
     Get the image from its location according to `fnames` and its segmentation
-    under `SEG_RUN_NAME`
+    under 
 
     Output has shape (T,1,Y,X)
     """
     row = df_fnames.loc[idx]
-    SEG_RUN_NAME="feb2"
     fname_img = row['path_file']
     DIR_results = PATH_RESULTS / row['folder']
     fname_results = (DIR_results / row['fname'])
@@ -50,9 +55,9 @@ def get_img_and_seg(df_fnames, PATH_RESULTS, idx='WT-1-1', SEG_RUN_NAME="feb2", 
     img=img_obj.data
     seg_obj=AICSImage(fname_results)
     seg=seg_obj.data
-    return img, seg, img_obj
+    return img, seg, img_obj, seg_obj
 
-def make_img_and_seg_grid(img, seg, channel='mito', sz=200, ac_norm=[0,17]):
+def make_img_and_seg_grid(img, seg, img_obj, seg_obj, channel='mito', sz=200, ac_norm=[0,17]):
     """
     Given an image and segmentation
 
@@ -84,4 +89,72 @@ def make_img_and_seg_grid(img, seg, channel='mito', sz=200, ac_norm=[0,17]):
 
     return grid
 
+def get_fname_lookup(path_fname, path_data, path_results=None):
+    """
+    Get fname-lookup csv files as a dataframe and do extra processing like 
+    getting the paths and testing that the group sizes are right.
 
+    Args:
+        path_fname: path to the csv file that has lookup info about the dataset.
+        path_data: home data dir for images. All paths in the lookup file (the 
+            1st arg) are relative to this directory. 
+        path_results: homa dir for completed segmentations.
+    """
+    df_fnames = pd.read_csv(path_fname).set_index('index')
+    df_fnames['path_file'] = str(path_data) +"/"+ df_fnames['folder']+"/"+df_fnames['fname']
+
+    for idx, row in df_fnames.iterrows():
+        fname = row['path_file']
+        if not os.path.exists(fname):
+            print(f"WARNING: did not find idx {idx} for file {fname}")
+
+    if path_results is not None: 
+        df_fnames['path_seg'] = str(path_results) + "/" + df_fnames['folder'] + "/" + df_fnames['fname']
+
+    return df_fnames
+
+def grid_from_2cols(x1, x2, nrow=10, ncol=8, scale_x2=1):
+    """
+    Given 2 tensors of images x1, x2, put them in a single imagegrid (by
+    calling torchvision.utils.make_grid) where x1[i] is next to x2[i].
+    It's useful for plotting an original image and its reconstruction.
+    """
+    n = nrow*(ncol//2)
+    x1, x2 = x1[:n], x2[:n]
+    if scale_x2:
+        l, u = x2.min(), x2.max()
+        x2 = (x2-l)/(u-l)
+    # add gray bars to separate the columns
+    gray_bar = 0.2*torch.ones((*x1.shape[:3], 2))
+    x1 = torch.cat((gray_bar, x1), dim=3)
+    x2 = torch.cat((x2, gray_bar), dim=3)
+
+
+    # merge the images and create a grid
+    assert x1.shape==x2.shape
+    x = torch.zeros((len(x1)*2, *x1.shape[1:]), dtype=x1.dtype)
+    x[0::2] = x1
+    x[1::2] = x2
+    grid = torchvision.utils.make_grid(x, ncol, padding=0)
+    grid = torch.permute(grid, (1,2,0))
+    return grid
+
+def grid_from_3cols(x1, x2, x3, scale_vals=1, nrow=10, ncol=6):
+    """
+    Same as `grid_from_2cols` but for 3 columns.
+    """
+    n = nrow*(ncol//3)
+    x1, x2, x3 = x1[:n], x2[:n], x3[:n]
+    if scale_vals:
+        x1 = (x1-x1.min()) / (x1.max()-x1.min())
+        x2 = (x2-x2.min()) / (x2.max()-x2.min())
+        x3 = (x3-x3.min()) / (x3.max()-x3.min())
+
+    assert x1.shape==x2.shape
+    x = torch.zeros((len(x1)*3, *x1.shape[1:]), dtype=x1.dtype)
+    x[0::3] = x1
+    x[1::3] = x2
+    x[2::3] = x3
+    grid = torchvision.utils.make_grid(x, ncol)
+    grid = torch.permute(grid, (1,2,0))
+    return grid

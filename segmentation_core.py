@@ -133,7 +133,7 @@ def _check_func_params_for_defaults(func_name, params, seg_funcs, verbose=0,
     return params
 
 def seg_2d(img_in, seg_config, seg_funcs, ch_name='mito', inplace=False,
-          save_inters=False):
+          save_inters=False, mask=None):
     """ 
     Input is YX
     Args: 
@@ -152,10 +152,16 @@ def seg_2d(img_in, seg_config, seg_funcs, ch_name='mito', inplace=False,
     # do checking of image properties and whether to inplace
     # inplace = seg_config[ch_name]['seg']['ops']['inplace']
     img = img_in.copy() if not inplace else img_in
+
+    if mask is not None:
+        assert img.shape==mask.shape
+        img = img*mask
+
     channel_name_list = ['mito','peroxy','lyso','er','golgi']
     assert ch_name in channel_name_list
     assert img.ndim==2, "Input shape must be YX"
     img = np.expand_dims(img, 0) # since aics seg assumes TYX input
+
     
     # prepare document for 'save_inters'
     inter_imgs = OrderedDict()
