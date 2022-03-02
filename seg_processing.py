@@ -292,8 +292,12 @@ def build_dataset_objects_and_scenes(df_fnames, PATH_RESULTS, channel="mito", fr
 
         # get the surrouding channels
         if context_kwargs['do']:
-            save_ch_idxs = [ch_idx_lookup[k] for k in context_kwargs['save_channels']
-                                        if k in ch_idx_lookup.keys()]
+            save_ch_idxs = []
+            for k in context_kwargs['save_channels']:
+                if k not in ch_idx_lookup.keys(): 
+                    v=ch_idx   # this is a hack: in case we can't find this key, just copy the original indx again (for when nucleus channel is missing)
+                else: 
+                    v=ch_idx_lookup[k]
             coords_center = [d['coords_center'] for d in metadata]
             contexts_seg, contexts_img = get_img_channel_contexts(img, seg, frame, save_ch_idxs, coords_center,
                             save_img=context_kwargs['save_img'], img_dim=context_kwargs['img_dim'])
