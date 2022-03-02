@@ -156,6 +156,8 @@ def seg_2d(img_in, seg_config, seg_funcs, ch_name='mito', inplace=False,
     if mask is not None:
         assert img.shape==mask.shape
         img = img*mask
+    if np.sum(mask)==0:
+        return np.zeros(mask.shape) # special case the mask is all zeros
 
     channel_name_list = ['mito','peroxy','lyso','er','golgi']
     assert ch_name in channel_name_list

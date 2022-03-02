@@ -298,6 +298,7 @@ def build_dataset_objects_and_scenes(df_fnames, PATH_RESULTS, channel="mito", fr
                     v=ch_idx   # this is a hack: in case we can't find this key, just copy the original indx again (for when nucleus channel is missing)
                 else: 
                     v=ch_idx_lookup[k]
+                save_ch_idxs.append(v)
             coords_center = [d['coords_center'] for d in metadata]
             contexts_seg, contexts_img = get_img_channel_contexts(img, seg, frame, save_ch_idxs, coords_center,
                             save_img=context_kwargs['save_img'], img_dim=context_kwargs['img_dim'])
@@ -379,6 +380,9 @@ def whole_cell_choose_central_big_cell(mask, threhold_cell_obj_size=10000):
     # (Bug risk: the index of the res objects is not the same index as what's in the label_img array #
     res=measure.regionprops(label_img)
     centroids = np.array([r['centroid'] for r in res])
+    ## handle the case that there are no objects
+    if len(centroids)==0: 
+        return np.zeros(mask.shape)
     # compute distance of the things to the img center 
     img_center = np.array(label_img.shape)//2
     dists = pairwise_distances(img_center[None,:], centroids)
