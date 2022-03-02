@@ -11,7 +11,8 @@ from sklearn.metrics import pairwise_distances
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
-def get_objects_from_segmentation(img, seg, min_pixels_per_object=0, connectivity=1, verbose=0):
+def get_objects_from_segmentation(img, seg, ch_idx, frame, 
+        min_pixels_per_object=0, connectivity=1, verbose=0):
     """
     Given an original image, `img`, and an instance segmentation mask,
     `seg` with the same shape, get ob.
@@ -25,6 +26,10 @@ def get_objects_from_segmentation(img, seg, min_pixels_per_object=0, connectivit
     Each entry in `objects` and objects_masked` may have different shapes. To 
     get them to be consistent, call `centr_img_to_size`
     """
+    img = img[frame, ch_idx, 0]
+    seg = seg[frame, ch_idx, 0]
+    assert img.ndim==2 and seg.ndim==2
+
     # get distinct objects
     labels = skimage.measure.label(seg, connectivity=connectivity)
 
@@ -40,6 +45,8 @@ def get_objects_from_segmentation(img, seg, min_pixels_per_object=0, connectivit
     objects_masked = []
     coords = []     # store the first (x,y) coordinate of this bounding box
     for l in label_vals[1:]:
+        if l>1000:
+            raise ValueError(f"More than {l} objects counted. Probably an error")
         # create the image mask from the larger mask
         mask = np.zeros(seg.shape)
         mask[labels==l]=1
@@ -67,10 +74,15 @@ def get_objects_from_segmentation(img, seg, min_pixels_per_object=0, connectivit
     coords = torch.IntTensor(coords) # other objects cannot be Tensors - different dims
     return objects_masked, objects, coords 
 
-def center_img_to_size(idx, fname_image, fname_seg, objects_masked_lst, original_img, seg_img, coords
-                    , img_dim=64, verbose=1, filter_big_things=0):
+
+def center_img_to_size(idx, fname_image, fname_seg, objects_masked_lst, coords,  
+        original_img, seg_img, obj_ch_idx, frame, img_dim=64, verbose=1, filter_big_things=0):
     """
+    obj_ch_idx is the index of the image that is centered
     """
+    # check the seg mask really is 1s and zeros only
+    assert np.all((seg_img==0)|(seg_img==1)), "Seg masks should be 0s and 1s"
+
     # identify big objects
     n_objects = len(objects_masked_lst)
     idxs_big_objects =  np.array([True if np.max(np.shape(o))>img_dim else False for o in objects_masked_lst])
@@ -90,26 +102,28 @@ def center_img_to_size(idx, fname_image, fname_seg, objects_masked_lst, original
     scenes_segmented = torch.zeros(n_objects, img_dim, img_dim)
     all_metadata=[]
 
-    print(n_objects)
     for i in range(n_objects):
         metadata=dict()
         metadata['idx']=idx
         metadata['fname_image']=fname_image
         metadata['fname_seg']=fname_seg
 
-        # coordinate positions
-        ymin, xmin = coords[i]
-        metadata['coords']=coords[i]
-
         # size of the cropped object
         ysz, xsz = objects_masked_lst[i].shape
         metadata['shape_original'] = objects_masked_lst[i].shape
         metadata['is_big'] = idxs_big_objects[i]
+        metadata['area'] = np.sum(objects_masked_lst[i])
 
-        # We'll place the cropped image inside a fixed size image shape (img_dim, img_dim)
-        # Find the slices where the crop will be placed
+        # coordinate positions
+        ymin, xmin = coords[i]
+        ymin, xmin = ymin.item(), xmin.item()
+        metadata['coords']=[ymin, xmin]
+        metadata['coords_center']=[ymin+ysz//2, xmin+xsz//2]
 
-        # first the regular case
+        ### We'll place the cropped image inside a fixed size image shape (img_dim, img_dim)
+        ### Find the slices where the crop will be placed
+
+        # first the regular case: the object fits inside img_dim
         if not idxs_big_objects[i]:
             ystart, xstart = (img_dim-ysz)//2, (img_dim-xsz)//2
             y_slc = slice(ystart, ystart+ysz)
@@ -124,7 +138,7 @@ def center_img_to_size(idx, fname_image, fname_seg, objects_masked_lst, original
         else:
             # for big objects, pull out the scene
             y_slc_big_scene, x_slc_big_scene = slice(ymin, ymin+ysz), slice(xmin, xmin+xsz)
-            big_obj_scene = original_img[y_slc_big_scene, x_slc_big_scene]
+            big_obj_scene = original_img[frame, obj_ch_idx, 0, y_slc_big_scene, x_slc_big_scene]
 
             # y too big, x fine
             if ysz>img_dim and xsz<=img_dim:
@@ -168,11 +182,13 @@ def center_img_to_size(idx, fname_image, fname_seg, objects_masked_lst, original
         # produce the scene
         y_slc = slice(max(0,ymin), ymin+img_dim)
         x_slc = slice(max(xmin,0), xmin+img_dim)
-        scene = torch.Tensor(original_img[y_slc, x_slc].astype(np.float16))
-        scene_seg = torch.Tensor(seg_img[y_slc, x_slc].astype(np.float16))
+        scene = torch.Tensor(original_img[frame, obj_ch_idx, 0, y_slc, x_slc].astype(np.float16))
+        seg_img_scene=seg_img[frame, obj_ch_idx, 0]
+        scene_seg = torch.Tensor(seg_img[frame,obj_ch_idx,0,y_slc, x_slc].astype(np.float16))
         scenes[i, 0:scene.shape[0], 0:scene.shape[1]] = scene
         scenes_segmented[i, 0:scene.shape[0], 0:scene.shape[1]] = scene_seg
         
+        # add metadata for this object to the list
         all_metadata.append(metadata)
 
 
@@ -182,75 +198,62 @@ def center_img_to_size(idx, fname_image, fname_seg, objects_masked_lst, original
 
     return objects_masked, scenes, scenes_segmented, all_metadata
 
+
+def get_img_channel_contexts(img, seg, frame, save_ch_idxs, coords_center, save_img=1, img_dim=128):
     """
-    # the old version of this funciton **
-    Take a list of variable-shaped 2d arrays that contain an object, assuming
-    that the object occupy the entire image (the bbox is the whole image).
-    Put img inside a patch that is shape (img_dim,img_dim) and center.
-    Return
-        objects (tensor): shape (bs,y,x). bs is the number of elements
-            in objects_lst minus those that are filtered for being too big
-        scenes (tensor): same shape as objects. Shows same scene but without
-            any masking. Do not do any pixel scaling. 
-    """
-    """
-    # filter objects that are too big for the chosen size
-    n_objects_before = len(objects_masked_lst)
-    idxs_big_objects =  [True if np.max(np.shape(o))<=img_dim else False 
-            for o in objects_masked_lst]
-    print(f"{len(idxs_big_objects)} objects that are too big")
-    filt = [True if np.max(np.shape(o))<=img_dim else False 
-                        for o in objects_masked_lst]
-    objects_masked_lst = list(itertools.compress(objects_masked_lst, filt))
-    coords = list(itertools.compress(coords, filt))
-    assert len(objects_masked_lst)==len(coords)
-    n_objects = len(objects_masked_lst)
-    n_too_big = n_objects_before-n_objects
-    if verbose>=1:
-        print(f"Filtered {n_too_big} objects for being too big")
-        print(f"{n_objects} objects found.\nFitting to {img_dim}X{img_dim} frame and centering")
-
-    # create results Tensor
-    n_objects=len(objects_masked_lst)
-    objects_masked = torch.zeros(n_objects, img_dim, img_dim)
-    scenes = torch.zeros(n_objects, img_dim, img_dim)
-
-    # Centre object and put it in the tensor
-    for i in range(n_objects):
-        yrange, xrange = objects_masked_lst[i].shape
-
-        # handle the regular case 'object is not too big'
-        if not idxs_big_objects[i]:
-            ystart, xstart = (img_dim-yrange)//2, (img_dim-xrange)//2
-            y_slc = slice(ystart, ystart+yrange)
-            x_slc = slice(xstart, xstart+xrange)
-
-            # put the masked object in the center of an empty image
-            obj_centred_masked = torch.zeros(img_dim, img_dim)
-            obj_centred_masked[y_slc, x_slc] = torch.Tensor(objects_masked_lst[i])
-            objects_masked[i] = obj_centred_masked
-        else: 
-            # in this case the image is bigger than 
-            pass
-
-
-        # get the full scene around the object from the original image
-        ymin, xmin = coords[i]
-        ymin -= ystart 
-        xmin -= xstart
-        y_slc = slice(max(0,ymin), ymin+img_dim)
-        x_slc = slice(max(xmin,0), xmin+img_dim)
-        scene = torch.Tensor(original_img[y_slc, x_slc].astype(np.float16))
-
-        # the complicated next line is to hanle the case that scene is not dim
-        # img_dim x img_dim because the slice exceeded the image
-        scenes[i,0:scene.shape[0], 0:scene.shape[1]] = scene
+    Given an array of coordinate centers, pull out the image that is centered at those 
+    coordinates with size ìmg_dim` from the image `img` and segmentation `seg`. 
+    Use the 
     
-    coords = torch.Tensor(coords)
-    return objects_masked[:,None], scenes[:,None], coords, n_too_big
-    """  
+    Args:
+        save_ch_idxs (list): indexes in the channel dimension to save. 
+        save_img (bool): if True then also save the original image
 
-def build_dataset_objects_and_scenes(df_fnames, PATH_RESULTS, channel="mito", frame=0, verbose=1, filter_big_things=0):
+    Returns: 
+        object_contexts (torch.Tensor)
+
+    """
+    assert img.ndim==5 and seg.ndim==5
+    assert img.shape==seg.shape
+    ymax, xmax = img.shape[-2:]
+    n_objs=len(coords_center)
+    n_channels=len(save_ch_idxs)
+    contexts_seg = torch.zeros(n_objs, n_channels, img_dim, img_dim)
+    contexts_img = torch.zeros(n_objs, n_channels, img_dim, img_dim)
+    
+    for i in range(len(coords_center)):
+        yc, xc = coords_center[i]
+
+        y_slc = slice(max(0,yc-img_dim//2),  yc+img_dim//2)
+        x_slc = slice(max(0,xc-img_dim//2),  xc+img_dim//2)
+        
+        cutout_seg = torch.Tensor(seg[frame,save_ch_idxs,0,y_slc,x_slc].astype(np.int16))
+
+        # the cutout seg may actually be smaller if the slice goes beyond the center. Get those params
+        # (this part doesn't apply for a majority of objects - only for objects near image border)
+        y_actual, x_actual = cutout_seg.shape[-2:]
+        if y_actual==img_dim:
+            y_slc_left=slice(0,img_dim)
+        else: 
+            y_slc_left = slice((img_dim-y_actual)//2, img_dim - (img_dim-y_actual+1)//2 )
+        if x_actual==img_dim:
+            x_slc_left=slice(0,img_dim)
+        else:
+            x_slc_left = slice((img_dim-x_actual)//2, img_dim - (img_dim-x_actual+1)//2 )
+
+        contexts_seg[i, :, y_slc_left, x_slc_left] = cutout_seg
+        
+        if save_img:
+            cutout_img = torch.Tensor(img[frame,save_ch_idxs,0,y_slc,x_slc].astype(np.float32))
+            contexts_img[i, :, y_slc_left, x_slc_left] = cutout_img
+
+    return contexts_seg, contexts_img 
+
+def build_dataset_objects_and_scenes(df_fnames, PATH_RESULTS, channel="mito", frame=0, 
+        verbose=1, filter_big_things=0, return_all_channel_segs=0,
+        context_kwargs=dict(do=1, img_dim=128, save_img=1,
+            save_channels=['mito', 'lyso', 'golgi', 'peroxy', 'er', 'nuclei'])
+        ):
     """
     Buid arrays that will be the dataset of segmented objects. 
 
@@ -260,7 +263,7 @@ def build_dataset_objects_and_scenes(df_fnames, PATH_RESULTS, channel="mito", fr
     Args:
         df_fnames (pd.DataFrame) having index 'idx', and keys `path_seg`, `path_file`, `folder`
     """
-    all_objects, all_scenes, all_scenes_segmented, all_metadata = [],[],[],[]
+    all_objects, all_scenes, all_scenes_segmented, all_metadata, all_contexts_seg, all_contexts_img = [],[],[],[],[],[]
     if verbose:
         print(f"Working on {len(df_fnames)} objects")
     for num, (i, row) in enumerate(df_fnames.iterrows()):
@@ -276,31 +279,44 @@ def build_dataset_objects_and_scenes(df_fnames, PATH_RESULTS, channel="mito", fr
         ch_idx_lookup = pu.get_channel_idx_lookup(img_obj.channel_names)
         ch_idx = ch_idx_lookup[channel]
 
-        img_ch=img_obj.get_image_data("TZYX",C=ch_idx)
-        seg_ch=seg_obj.data
+        #img_ch=img_obj.get_image_data("TZYX",C=ch_idx)
+        img = img_obj.data
+        seg=seg_obj.data
 
-        seg_ch=seg_ch[:,ch_idx]
+        # pull out separate objects from the segmentation mask
+        objects_masked_original, objects, coords = get_objects_from_segmentation(img, seg, ch_idx, frame, connectivity=1, verbose=verbose)
+        # create dataset of objects with size img_dim that have the centered
+        objects_masked, scenes, scenes_segmented, metadata = center_img_to_size(idx, fname_image, fname_seg, objects_masked_original,
+                                obj_ch_idx=ch_idx, frame=frame, original_img=img, seg_img=seg, coords=coords, img_dim=64, verbose=1,
+                                filter_big_things=filter_big_things,)
 
-        objects_masked_original, objects, coords = get_objects_from_segmentation(img_ch[frame,0], seg_ch[frame,0],
-                                                                       connectivity=1, verbose=verbose)
-        objects_masked, scenes, scenes_segmented, metadata = center_img_to_size(idx, fname_image, fname_seg, objects_masked_original, original_img=img_ch[frame,0], seg_img=seg_ch[frame,0],
-                                                                         coords=coords, img_dim=64, verbose=1, filter_big_things=filter_big_things,)
+        # get the surrouding channels
+        if context_kwargs['do']:
+            save_ch_idxs = [ch_idx_lookup[k] for k in context_kwargs['save_channels']
+                                        if k in ch_idx_lookup.keys()]
+            coords_center = [d['coords_center'] for d in metadata]
+            contexts_seg, contexts_img = get_img_channel_contexts(img, seg, frame, save_ch_idxs, coords_center,
+                            save_img=context_kwargs['save_img'], img_dim=context_kwargs['img_dim'])
 
+        # append this iterations objects
         labels = [idx]*len(objects_masked)
 
         all_objects.append(objects_masked)
         all_scenes.append(scenes)
         all_scenes_segmented.append(scenes_segmented)
-        all_metadata.append(metadata)
-
+        all_metadata.extend(metadata)
+        all_contexts_seg.append(contexts_seg)
+        all_contexts_img.append(contexts_img)
         if verbose: print(f"\t{len(objects_masked)} objects")
 
     all_objects=torch.cat(all_objects)
     all_scenes=torch.cat(all_scenes)
+    all_contexts_seg=torch.cat(all_contexts_seg)
+    all_contexts_img=torch.cat(all_contexts_img)
     all_scenes_segmented=torch.cat(all_scenes_segmented)
     all_metadata = all_metadata # pass
 
-    return all_objects, all_scenes, all_scenes_segmented, all_metadata
+    return all_objects, all_scenes, all_scenes_segmented, all_metadata, all_contexts_seg, all_contexts_img
 
 def whole_cell_combine_channels(fname, img, merge_channels=['lyso','mito','golgi','peroxy','er',]):
     """ 
@@ -326,6 +342,7 @@ def whole_cell_combine_channels(fname, img, merge_channels=['lyso','mito','golgi
     # sum the images 
     img_sum = np.mean( np.concatenate([im for im in img_set]), axis=0, keepdims=True)
     return img_sum 
+
 def whole_cell_smooth_and_mask(img_sum, sigma=15, threshold_sensitivity=5):
     """
     """
@@ -334,6 +351,7 @@ def whole_cell_smooth_and_mask(img_sum, sigma=15, threshold_sensitivity=5):
     mask = np.zeros_like(img_sum_blurred)
     mask[img_sum_blurred>upper/threshold_sensitivity]=1
     return img_sum_blurred, mask
+
 def whole_cell_choose_central_big_cell(mask, threhold_cell_obj_size=10000):
     """
     Given a mask, pick a single object to be the final cell mask. 
