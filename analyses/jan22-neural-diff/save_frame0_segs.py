@@ -58,9 +58,10 @@ for i, row in df_fnames.iterrows():
     ch_idx_lookup = pu.get_channel_idx_lookup(img_obj.channel_names)
     ch_idx = ch_idx_lookup[channel]
 
-    img = img_obj.data[frame,ch_idx,0]
-    seg = seg_obj.data[frame,ch_idx,0]
+    img = img_obj.data[frame,ch_idx,0].copy()
+    seg = seg_obj.data[frame,ch_idx,0].copy()
 
     all_imgs_and_seg[idx]=[img, seg]
+    del img, seg, img_obj, seg_obj
     
-np.save("./tmp.np", all_imgs_and_seg)
+torch.save(all_imgs_and_seg, "./tmp.sav" )

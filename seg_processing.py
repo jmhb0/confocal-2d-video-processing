@@ -11,7 +11,7 @@ from sklearn.metrics import pairwise_distances
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
-def get_objects_from_segmentation(img, seg, ch_idx, frame, 
+def get_objects_from_segmentation(img, seg, ch_idx, frame, z=0,
         min_pixels_per_object=0, connectivity=1, verbose=0):
     """
     Given an original image, `img`, and an instance segmentation mask,
@@ -26,8 +26,9 @@ def get_objects_from_segmentation(img, seg, ch_idx, frame,
     Each entry in `objects` and objects_masked` may have different shapes. To 
     get them to be consistent, call `centr_img_to_size`
     """
-    img = img[frame, ch_idx, 0]
-    seg = seg[frame, ch_idx, 0]
+    if ch_idx is not None:
+        img = img[frame, ch_idx, z]
+        seg = seg[frame, ch_idx, z]
     assert img.ndim==2 and seg.ndim==2
 
     # get distinct objects
@@ -45,7 +46,7 @@ def get_objects_from_segmentation(img, seg, ch_idx, frame,
     objects_masked = []
     coords = []     # store the first (x,y) coordinate of this bounding box
     for l in label_vals[1:]:
-        if l>1000:
+        if l>10000:
             raise ValueError(f"More than {l} objects counted. Probably an error")
         # create the image mask from the larger mask
         mask = np.zeros(seg.shape)
@@ -76,7 +77,7 @@ def get_objects_from_segmentation(img, seg, ch_idx, frame,
 
 
 def center_img_to_size(idx, fname_image, fname_seg, objects_masked_lst, coords,  
-        original_img, seg_img, obj_ch_idx, frame, img_dim=64, verbose=1, filter_big_things=0):
+        original_img, seg_img, obj_ch_idx, frame, z=0, img_dim=64, verbose=1, filter_big_things=0, do_scene=True):
     """
     obj_ch_idx is the index of the image that is centered
     """
@@ -138,7 +139,8 @@ def center_img_to_size(idx, fname_image, fname_seg, objects_masked_lst, coords,
         else:
             # for big objects, pull out the scene
             y_slc_big_scene, x_slc_big_scene = slice(ymin, ymin+ysz), slice(xmin, xmin+xsz)
-            big_obj_scene = original_img[frame, obj_ch_idx, 0, y_slc_big_scene, x_slc_big_scene]
+            if do_scene:
+                big_obj_scene = original_img[frame, obj_ch_idx, z, y_slc_big_scene, x_slc_big_scene]
 
             # y too big, x fine
             if ysz>img_dim and xsz<=img_dim:
@@ -172,6 +174,7 @@ def center_img_to_size(idx, fname_image, fname_seg, objects_masked_lst, coords,
             else:
                 raise ValueError("implementation error")
 
+            if not do_scene: big_obj_scene=None
             metadata['big_obj_data'] = [
                 i,
                 objects_masked_lst[i],
@@ -179,27 +182,29 @@ def center_img_to_size(idx, fname_image, fname_seg, objects_masked_lst, coords,
                 coords[i],
             ]
 
-        # produce the scene
-        y_slc = slice(max(0,ymin), ymin+img_dim)
-        x_slc = slice(max(xmin,0), xmin+img_dim)
-        scene = torch.Tensor(original_img[frame, obj_ch_idx, 0, y_slc, x_slc].astype(np.float16))
-        seg_img_scene=seg_img[frame, obj_ch_idx, 0]
-        scene_seg = torch.Tensor(seg_img[frame,obj_ch_idx,0,y_slc, x_slc].astype(np.float16))
-        scenes[i, 0:scene.shape[0], 0:scene.shape[1]] = scene
-        scenes_segmented[i, 0:scene.shape[0], 0:scene.shape[1]] = scene_seg
+        if do_scene:
+            # produce the scene
+            y_slc = slice(max(0,ymin), ymin+img_dim)
+            x_slc = slice(max(xmin,0), xmin+img_dim)
+            scene = torch.Tensor(original_img[frame, obj_ch_idx, z, y_slc, x_slc].astype(np.float16))
+            seg_img_scene=seg_img[frame, obj_ch_idx, z]
+            scene_seg = torch.Tensor(seg_img[frame,obj_ch_idx,z,y_slc, x_slc].astype(np.float16))
+            scenes[i, 0:scene.shape[0], 0:scene.shape[1]] = scene
+            scenes_segmented[i, 0:scene.shape[0], 0:scene.shape[1]] = scene_seg
         
         # add metadata for this object to the list
         all_metadata.append(metadata)
 
 
     objects_masked = objects_masked.unsqueeze(1)
-    scenes = scenes.unsqueeze(1)
-    scenes_segmented = scenes_segmented.unsqueeze(1)
+    if do_scene:
+        scenes = scenes.unsqueeze(1)
+        scenes_segmented = scenes_segmented.unsqueeze(1)
 
     return objects_masked, scenes, scenes_segmented, all_metadata
 
 
-def get_img_channel_contexts(img, seg, frame, save_ch_idxs, coords_center, save_img=1, img_dim=128):
+def get_img_channel_contexts(img, seg, frame, save_ch_idxs, coords_center, z=0, save_img=1, img_dim=128):
     """
     Given an array of coordinate centers, pull out the image that is centered at those 
     coordinates with size ìmg_dim` from the image `img` and segmentation `seg`. 
@@ -227,7 +232,7 @@ def get_img_channel_contexts(img, seg, frame, save_ch_idxs, coords_center, save_
         y_slc = slice(max(0,yc-img_dim//2),  yc+img_dim//2)
         x_slc = slice(max(0,xc-img_dim//2),  xc+img_dim//2)
         
-        cutout_seg = torch.Tensor(seg[frame,save_ch_idxs,0,y_slc,x_slc].astype(np.int16))
+        cutout_seg = torch.Tensor(seg[frame,save_ch_idxs,z,y_slc,x_slc].astype(np.int16))
 
         # the cutout seg may actually be smaller if the slice goes beyond the center. Get those params
         # (this part doesn't apply for a majority of objects - only for objects near image border)
@@ -244,12 +249,12 @@ def get_img_channel_contexts(img, seg, frame, save_ch_idxs, coords_center, save_
         contexts_seg[i, :, y_slc_left, x_slc_left] = cutout_seg
         
         if save_img:
-            cutout_img = torch.Tensor(img[frame,save_ch_idxs,0,y_slc,x_slc].astype(np.float32))
+            cutout_img = torch.Tensor(img[frame,save_ch_idxs,z,y_slc,x_slc].astype(np.float32))
             contexts_img[i, :, y_slc_left, x_slc_left] = cutout_img
 
     return contexts_seg, contexts_img 
 
-def build_dataset_objects_and_scenes(df_fnames, PATH_RESULTS, channel="mito", frame=0, 
+def build_dataset_objects_and_scenes(df_fnames, PATH_RESULTS, channel="mito", frame=0, z=0,
         verbose=1, filter_big_things=0, return_all_channel_segs=0,
         context_kwargs=dict(do=1, img_dim=128, save_img=1,
             save_channels=['mito', 'lyso', 'golgi', 'peroxy', 'er', 'nuclei'])
@@ -264,6 +269,9 @@ def build_dataset_objects_and_scenes(df_fnames, PATH_RESULTS, channel="mito", fr
         df_fnames (pd.DataFrame) having index 'idx', and keys `path_seg`, `path_file`, `folder`
     """
     all_objects, all_scenes, all_scenes_segmented, all_metadata, all_contexts_seg, all_contexts_img = [],[],[],[],[],[]
+    
+    do_zmid = (True if z==-1 else False)
+
     if verbose:
         print(f"Working on {len(df_fnames)} objects")
     for num, (i, row) in enumerate(df_fnames.iterrows()):
@@ -283,8 +291,12 @@ def build_dataset_objects_and_scenes(df_fnames, PATH_RESULTS, channel="mito", fr
         img = img_obj.data
         seg=seg_obj.data
 
+        # special case for frame - get the middle one 
+        if do_zmid:
+            z = img.shape[2]//2
+
         # pull out separate objects from the segmentation mask
-        objects_masked_original, objects, coords = get_objects_from_segmentation(img, seg, ch_idx, frame, connectivity=1, verbose=verbose)
+        objects_masked_original, objects, coords = get_objects_from_segmentation(img, seg, ch_idx, frame, z, connectivity=1, verbose=verbose)
         # create dataset of objects with size img_dim that have the centered
         objects_masked, scenes, scenes_segmented, metadata = center_img_to_size(idx, fname_image, fname_seg, objects_masked_original,
                                 obj_ch_idx=ch_idx, frame=frame, original_img=img, seg_img=seg, coords=coords, img_dim=64, verbose=1,
@@ -455,3 +467,45 @@ def whole_cell_segment_eval_make_pdf(idxs, fnames, fname_eval):
             # plot out the segmentation
             f, _ =whole_cell_segment_eval(fname, img, title=idx)
             pdf.savefig(f)
+
+"""
+# some code for generating the segmentations from Allen, which is slightly different 
+# from generating them from neuro-diff, though not that different honetsly.
+import seg_processing as sp
+from pathlib import Path
+importlib.reload(sp)
+
+max_objs = 20000
+all_objects = []
+cnt=0
+filter_big_things=0
+d = "/pasteur/data/allen_single_cell_image_dataset/lyso_samples/sample-imgs-and-segs/"
+fnames_seg = [os.path.join(d, f)  for f in os.listdir(d) if "_seg.tif" in f]
+fnames_img=[f[:-7]+"img.tif" for f in fnames_seg]
+
+for i in range(len(fnames_seg)):
+    print(cnt,end=", ")
+    if cnt>max_objs:break
+    fname_image=fnames_img[i]
+    fname_seg=fnames_seg[i]
+    img=imread(fnames_img[i])
+    seg=imread(fnames_seg[i])
+    seg[seg>0]=1
+    idx=Path(fnames_seg[0]).stem
+
+    objects_masked_original, objects, coords = sp.get_objects_from_segmentation(img, seg, ch_idx=None, frame=None, connectivity=1, verbose=verbose)
+
+    objects_masked, scenes, scenes_segmented, metadata = sp.center_img_to_size(idx, fname_image, fname_seg, objects_masked_original,
+                    obj_ch_idx=None, frame=None, original_img=img, seg_img=seg, coords=coords, img_dim=64, verbose=1,
+                    filter_big_things=filter_big_things,do_scene=0)
+    if 0:
+        plt.figure(figsize=(15,15))
+        plt.imshow(make_grid(objects_masked[:400], 40)[0], cmap='gray')
+        plt.show()
+
+    cnt+=len(objects_masked)
+    all_objects.append(objects_masked)
+
+all_objects=torch.cat(all_objects)[:max_objs]
+print(all_objects.shape)
+"""
