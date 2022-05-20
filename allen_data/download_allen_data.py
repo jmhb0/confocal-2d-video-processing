@@ -26,7 +26,7 @@ def download_raw_img_and_segs(structure_name="TOMM20",
          fname_meta_df=None,
          ):
     """
-    Download cell data and segmentation from Allen cell databse
+    Download cell data and segmentation from Allen cell databse for structures (organelles / proteins)
     Based on tutorials at https://github.com/AllenCell/quilt-data-access-tutorials
     With dataset at https://open.quiltdata.com/b/allencell/packages/aics/hipsc_single_cell_image_dataset
     And paper at  https://www.biorxiv.org/content/10.1101/2020.12.08.415562v1.full.pdf
@@ -172,9 +172,6 @@ def save_img_and_seg(save_path="/pasteur/data/allen_single_cell_image_dataset/mi
         imsave(fname_new_img, img[frame_indx,channel])
         imsave(fname_new_seg, seg[frame_indx])
 
-
-        import tqdm
-        
 def download_cell_nucleus_seg_fovs(dir_fovs="/pasteur/data/allen_single_cell_image_dataset/cell-nucleus-segs/fovs"):
     """
     Download all the fields of view in the dataset (there are 18186)
@@ -210,102 +207,4 @@ def download_cell_nucleus_seg_fovs(dir_fovs="/pasteur/data/allen_single_cell_ima
         local_fn = os.path.join(dir_fovs, f"fov_seg_{row.FOVId}.tiff")
         pkg[subdir_name][file_name].fetch(local_fn)
 
-from pathlib import Path
-from aicsimageio import AICSImage
-import os
-import numpy as np
-import torch
-import tqdm
-
-def fov_to_3d_cell_nucleus_masks(dir_fovs = "/pasteur/data/allen_single_cell_image_dataset/cell-nucleus-segs/fovs",
-                                 dir_segs_3d = "/pasteur/data/allen_single_cell_image_dataset/cell-nucleus-segs/cell_nucleus_masks_3d",
-                                 first_n=None,
-                                 fname_meta_df='/pasteur/u/jmhb/confocal-2d-video-processing/allen_data/meta_df.csv'):
-    """
-    Given a path containing images of fovs,
-    first_n (int): if debugging, set to 1 or 2 to only process the first 1 or 2 fov's.
-    """
-    if fname_meta_df is None:
-        meta_df = pkg["metadata.csv"]()
-    else:
-        meta_df = pd.read_csv(fname_meta_df)
-
-    fov_fns= [os.path.join(dir_fovs, f) for f in os.listdir(dir_fovs)]
-    sorted(fov_fns)
-    for i, fov_fn in enumerate(tqdm.tqdm(fov_fns)):
-        if first_n is not None and i>=first_n:
-            break
-        img_aics = AICSImage(fov_fn)
-        img = img_aics.get_image_data('CZYX', T=0)
-
-        # get the info about the cell
-        fov_id = Path(fov_fn).stem.split("_")[-1]
-        cells = meta_df.query(f"FOVId=={fov_id}")
-
-        # for each cell get the cell and nucleus channels cropped
-        all_crops = []
-        for (i, row) in cells.iterrows():
-            # get the seg masks for this particular cell
-            mask_indx = row.this_cell_index
-            nucleus_mask = (img[0]==mask_indx)
-            cell_mask = (img[1]==mask_indx)
-
-            # the crop regions are the coords that capture the cell. Nucleus
-            # will use the same coords.
-            coords = np.argwhere(cell_mask)
-            l0, l1, l2 = coords.min(0)
-            u0, u1, u2 = coords.max(0)
-            s0, s1, s2 = slice(l0,u0+1), slice(l1,u1+1), slice(l2,u2+1)
-
-            # create a new image to hold the cell and nucleus - 2 channel
-            crop = np.zeros_like(img[[0,1], s0, s1, s2])
-            crop[0] = nucleus_mask[s0, s1, s2]
-            crop[1] = cell_mask[s0, s1, s2]
-
-            # save a tuple of CellId and crop
-            all_crops.append(( row.CellId, crop ))
-
-        # save crops for this fov
-        torch.save(all_crops, os.path.join(dir_segs_3d, f"seg_crop_{fov_id}.sav"))
-
-def get_3d_crops_project(dir_segs_3d = "/pasteur/data/allen_single_cell_image_dataset/cell-nucleus-segs/cell_nucleus_masks_3d",
-                         f_project_out="/pasteur/data/allen_single_cell_image_dataset/cell-nucleus-segs/cell-nucleus-2d-projections.sav"
-                        , first_n=None):
-    """
-    Get the cropped objects and create a 2d representation. There are 2 methods and we ave them both. 
-    1. index the slice with the greatest nucleus area. 
-    2. max intensity projection. 
-    
-    dir_segs_3d (Path): the directory holding the lists of cropped objects.
-    f_project_out (Path): the filename to save the result 
-    
-    Side-effect: 
-    Save output to `f_project_out`. Which is a 3-element tuple. Els 0 and 1 are lists of the 2d projection 
-    of the cropped object: el 0 is the slice. El 1 is the max intensity projection. El 2 a list of cell ids.
-    """
-
-    fnames = [ os.path.join(dir_segs_3d, f) for f in os.listdir(dir_segs_3d) ] 
-
-    if first_n is not None: 
-        fnames = fnames[:first_n]
-    
-    all_cell_ids, all_slice_max, all_max_projection = [], [], []
-
-    for f in tqdm.tqdm(fnames):
-        # get the crops for this fov
-        all_crops = torch.load(f)
-
-        # get the 2d representation: cell nucleus slice and max intensity projection separately. 
-        for i in range(len(all_crops)):
-            cell_id, crop = all_crops[i]
-            all_cell_ids.append(cell_id)
-
-            # choose the slice with largest nucleus area
-            max_nucleus_idx = np.argmax(crop.sum(-1).sum(-1)[0])
-            all_slice_max.append(crop[:,max_nucleus_idx])
-
-            # alternatively do max projection
-            all_max_projection.append(crop.max(1))
-    
-    torch.save((all_cell_ids, all_slice_max, all_max_projection), f_project_out)
 
