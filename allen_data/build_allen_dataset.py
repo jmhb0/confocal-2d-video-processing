@@ -7,7 +7,7 @@ import tqdm
 from skimage.measure import regionprops
 import matplotlib.pyplot as plt
 
-def check_centroid_is_centered(img, dims=2, verbose=0, tol=0.7):
+def check_centroid_is_centered(img, dims=2, verbose=0, tol=0.51):
     """
     Given an image that is 2d or 3d (no channels) check that the
     centroid (measured by skimage.measure.regionprops) is within 0.5
@@ -15,7 +15,7 @@ def check_centroid_is_centered(img, dims=2, verbose=0, tol=0.7):
     """
     assert img.ndim==dims
     midpoint = np.array(img.shape)/2
-    centroid = regionprops(img)[0].centroid
+    centroid = regionprops(np.array(img))[0].centroid
     gap = np.absolute(midpoint-centroid)
     if verbose:
         print(f"midpoint {midpoint}\ncentroid {centroid}\ngap {gap}")
@@ -172,14 +172,14 @@ def center_img(img, dims=2, by_channel=1, method='center_mass',
     # first compute how much we need to shift
     shape = np.array(img.shape[1:])
     midpoint = shape/2
-    shift = (midpoint-centroid).round().astype(np.int8)
+    shift = (midpoint-centroid).round().astype(np.int64)
 
     # now roll
     roll_axis = (1,2) if dims==2 else (1,2,3)
     img = np.roll(img, shift, axis=roll_axis)
     
-    assert check_centroid_is_centered(img[by_channel])
-    img=_crop_img_evenly(img, dims=2, by_channel=1, verbose=verbose)
+    assert check_centroid_is_centered(img[by_channel], verbose=verbose)
+    img=_crop_img_evenly(img, dims=2, by_channel=by_channel, verbose=verbose)
     assert check_centroid_is_centered(img[by_channel], verbose=verbose)
     
     return img
@@ -209,7 +209,7 @@ def _crop_img_evenly(img, dims=2, by_channel=1, assert_centroid=1, verbose=0):
     # do slicing 
     slcs =  tuple( 
         [slice(0,len(img))] +\
-        [slice(remove_pad[i], shape[i]-remove_pad[i]) for i in range(dims)] 
+        [slice(remove_pad[i]-1, shape[i]-remove_pad[i]+1) for i in range(dims)] 
     )
     img=img[slcs]
 
@@ -219,7 +219,7 @@ def _crop_img_evenly(img, dims=2, by_channel=1, assert_centroid=1, verbose=0):
     return img 
 
 def put_centered_imgs_to_standard_sz(all_slices_centered, all_cell_ids, sz=512,
-                                     dims=2, keep_too_big_cells=1):
+                                     dims=2, by_channel=1, keep_too_big_cells=1):
     """
     Args:
     all_slices_centered (list<np.array>): output of running something like
@@ -267,7 +267,7 @@ def put_centered_imgs_to_standard_sz(all_slices_centered, all_cell_ids, sz=512,
         # if we have to do a crop, then the centroid of the remaining image will have moved, so we'd
         # fail this test. But we actually prefer not to move it (if you think about it)
         if not big_flag:
-            assert check_centroid_is_centered(data[i,1], tol=2, verbose=0)
+            assert check_centroid_is_centered(data[i,by_channel], tol=2, verbose=0)
 
     # if we ignored some cells, then delete their data
     if not keep_too_big_cells:
@@ -291,6 +291,9 @@ def combine_cell_nuclei_one_img(data):
     joint = np.zeros((n,1,y,x))
     joint[cell_mask]=2
     joint[nucleus_mask]=1
+    
+    if type(data)==torch.Tensor:
+        joint=torch.from_numpy(joint)
 
     return joint
 
@@ -301,6 +304,9 @@ def build_dataset(data, data_cell_ids, meta_df, M0_only=0, do_plot=0,
     Optionally make a plot of what the cells look like.
 
     Optionally resize.
+    Args 
+    data (np.ndarray): 
+    data_cell_ids (np.ndarray): 
     """
     from torchvision.transforms import Resize
     meta_cells = meta_df.set_index('CellId').loc[data_cell_ids]
@@ -314,7 +320,7 @@ def build_dataset(data, data_cell_ids, meta_df, M0_only=0, do_plot=0,
         axs = axs.flatten()
         for i, stage in enumerate(stages):
             idxs = (cell_stages==stage)
-            samples = data_samples_plot[idxs][:nrows**2]
+            samples = torch.from_numpy(data_samples_plot)[idxs][:nrows**2]
             grid = make_grid(samples, nrows)[0]
             axs[i].imshow(grid, cmap='gray')
             axs[i].set(title=f"{stage}, {idxs.sum()}")
