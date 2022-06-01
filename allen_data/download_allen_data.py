@@ -1,4 +1,5 @@
 import quilt3
+import psutil
 from aicsimageio import AICSImage
 from aicsimageio.writers import OmeTiffWriter
 from skimage.io import imread, imsave
@@ -206,5 +207,110 @@ def download_cell_nucleus_seg_fovs(dir_fovs="/pasteur/data/allen_single_cell_ima
         file_name = row.fov_seg_path.split("/")[1]
         local_fn = os.path.join(dir_fovs, f"fov_seg_{row.FOVId}.tiff")
         pkg[subdir_name][file_name].fetch(local_fn)
+
+def get_mito_single_cells():
+    # below, all the instances of "structure" mean some organelle depending on "structure_name"
+    structure_name="TOMM20"
+
+    # data directories
+    dir_data_out = "/pasteur/data/allen_single_cell_image_dataset/mito_samples/mito_single_cells"
+    d_structures = "/pasteur/data/allen_single_cell_image_dataset/mito_samples/structure_segmentation"
+    d_structure_raw = "/pasteur/data/allen_single_cell_image_dataset/mito_samples/raw_image"
+    d_fov_segs = "/pasteur/data/allen_single_cell_image_dataset/cell-nucleus-segs/fovs"
+
+    fname_meta_df='/pasteur/u/jmhb/confocal-2d-video-processing/allen_data/meta_df.csv'
+    pkg = quilt3.Package.browse("aics/hipsc_single_cell_image_dataset", "s3://allencell")
+
+    ## packages
+    # print("Getting Quilt package")
+    print("Getting metadata.csv")
+    if fname_meta_df is None: 
+        pkg = quilt3.Package.browse("aics/hipsc_single_cell_image_dataset", "s3://allencell")
+        meta_df = pkg["metadata.csv"]()
+    else: 
+        meta_df = pd.read_csv(fname_meta_df)
+
+    ## filter for this structure 
+
+    def norm_0_1(x):
+        l,u = np.min(x), np.max(x)
+        return (x-l) / (u-l)
+
+    df_structure=meta_df.query(f"structure_name=='{structure_name}'")
+    print(f"Unique FOVS with this structure {structure_name} is: {len(df_structure.FOVId.unique())}")
+    # get existing files 
+    fs_m = os.listdir(d_structures)
+    fs_f = os.listdir(d_fov_segs)
+    ids_m = np.array([f.split("_")[0] for f in fs_m])
+    ids_f = np.array([f.split(".")[0].split("_")[-1] for f in fs_f])
+    print("number of fov ids in mito", ids_m.shape, "in fovs", ids_f.shape)
+    print("pcnt of mitos found in fovs", np.isin(ids_m, ids_f).sum() / len(ids_m))
+    i=0
+    import tqdm
+    t = tqdm.tqdm(ids_m)
+    # iterate over fovids 
+    for fovid in t:
+        t.set_description(f"i: {i} Memory usage: {psutil.virtual_memory().percent} %")
+        f_structure_seg = os.path.join(d_structures, f"{fovid}_segmentation.tiff")
+        f_structure_raw = os.path.join(d_structure_raw, f"{fovid}_original.tiff")
+        f_cell_seg = os.path.join(d_fov_segs, f"fov_seg_{fovid}.tiff")
+
+        img_structure_seg = imread(f_structure_seg)
+        img_structure_raw = imread(f_structure_raw)
+        img_cell_seg = imread(f_cell_seg)
+
+        ### df_this is the cells for this FOV
+        df_this = meta_df.query(f"FOVId=={fovid}")
+        all_cells, all_cellids = [], []
+
+        # iterate over cells in the fov
+        for i, (_, row) in enumerate(df_this.iterrows()):
+            t.set_description(f"i: {i} Memory usage: {psutil.virtual_memory().percent}%, cpu {psutil.cpu_percent()}")
+            # cell and nucleus mask
+            cell_mask = np.zeros_like(img_structure_seg, np.uint8)
+            nucleus_mask = np.zeros_like(img_structure_seg, np.uint8)
+            nucleus_mask[img_cell_seg[:,:,:,0]==row.this_cell_index]=1
+            cell_mask[img_cell_seg[:,:,:,1]==row.this_cell_index]=1
+
+            # crop based on cell mask 
+            coords = np.argwhere(cell_mask)
+            l0, l1, l2 = coords.min(0)
+            u0, u1, u2 = coords.max(0)
+            s0, s1, s2 = slice(l0,u0+1), slice(l1,u1+1), slice(l2,u2+1)
+
+            ## out img to hold everything 
+            out_img = np.zeros((u0-l0+1, u1-l1+1, u2-l2+1, 6), np.float32)
+
+            ## segmentations 
+            # add cell and nucleus mask to channels 0 and 1
+            out_img[:,:,:,0] = nucleus_mask[s0, s1, s2].copy()
+            out_img[:,:,:,1] = cell_mask[s0, s1, s2].copy()
+            # mito seg 
+            out_img[:,:,:,2] = (cell_mask*img_structure_seg/255)[s0, s1, s2].copy()
+
+            ## raw  
+            # cell, nucleus, and structure are all in img_structure raw.
+            # there are 2 different images that may appear, one with 
+            # shape (z,c,y,x) with c=7, and one with shape (z,y,x,c) with c=4. 
+            if img_structure_raw.shape[1]==7:
+                nucleus_raw = (nucleus_mask*norm_0_1(img_structure_raw[:,5]))[s0, s1, s2] 
+                cell_raw = (cell_mask*norm_0_1(img_structure_raw[:,1]))[s0, s1, s2] 
+                structure_raw = (cell_mask*norm_0_1(img_structure_raw[:,3]))[s0, s1, s2] 
+            elif img_structure_raw.shape[-1]==4:
+                nucleus_raw = (nucleus_mask*norm_0_1(img_structure_raw[:,:,:,2]))[s0, s1, s2] 
+                cell_raw = (cell_mask*norm_0_1(img_structure_raw[:,:,:,0]))[s0, s1, s2] 
+                structure_raw = (cell_mask*norm_0_1(img_structure_raw[:,:,:,1]))[s0, s1, s2] 
+            else:
+                raise ValueError(f"unknwon format for img structure raw shape {img_structure_raw.shape}")    
+            out_img[:,:,:,3] = nucleus_raw
+            out_img[:,:,:,4] = cell_raw
+            out_img[:,:,:,5] = structure_raw
+
+            ## append cell to the list
+            all_cells.append(out_img)
+            all_cellids.append(row.CellId)
+
+        f_out = os.path.join(dir_data_out, f"{fovid}_cell_structure.sav")
+        np.save(f_out, [all_cells, all_cellids]) 
 
 
