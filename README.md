@@ -37,7 +37,7 @@ Functions for doing single-frame segmentations and producing pdfs.
 Example analysis in `analyses/snr/jan22-neural-diff`:
 - Notebooks to display segmentation results and choose parameters: `seg-mito.ipynb`, `seg-nucleus.ipynb` etc. Each one will have a string structured like a yaml config that determines the method. 
 - Once you have the config for each organelle, put it in `configs/` folder (see exmaple)
-- To do the segmentation, run `do-segmentations.py. 
+- To do the segmentation, run `do-segmentations.py`.
 -- A lot of parameters need to be set here: the location of the data folder; location of a csv containing a column called `path_file` that is the relative path (from the data folder) to the images to segment; that csv will be saved to `df_fnames` and there is code to choose a subset of this data to actually segment; location of the config file for segmentation and only those channels in the config will get segmented; the `SEG_RUN_NAME` will create a folder in the data home directory that mirrors the structure of the data directory but replacing the image with a segmented version; some code for choosing a subset. 
 -- The script reads the data assuming the dimensions are TCZYX. If the flag `DO_CELL_MASK` is True, then  a whole-cell mask is estimated at each timestep and applied to each segmentation. 
 -- Segmentation is done for each timestep and channel independently. 
