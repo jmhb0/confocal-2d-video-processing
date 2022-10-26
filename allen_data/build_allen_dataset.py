@@ -3,8 +3,9 @@ from aicsimageio import AICSImage
 import os
 import numpy as np
 import torch
+import psutil
 import tqdm
-from skimage.measure import regionprops
+from skimage import measure 
 import matplotlib.pyplot as plt
 
 def check_centroid_is_centered(img, dims=2, verbose=0, tol=0.51):
@@ -15,7 +16,7 @@ def check_centroid_is_centered(img, dims=2, verbose=0, tol=0.51):
     """
     assert img.ndim==dims
     midpoint = np.array(img.shape)/2
-    centroid = regionprops(np.array(img))[0].centroid
+    centroid = measure.regionprops(np.array(img).astype(int))[0].centroid
     gap = np.absolute(midpoint-centroid)
     if verbose:
         print(f"midpoint {midpoint}\ncentroid {centroid}\ngap {gap}")
@@ -147,7 +148,9 @@ def center_img(img, dims=2, by_channel=1, method='center_mass',
         Then one should separately call `crop_img_evenly`. This is easier than 
         padding by the right amount
     """
-    assert np.array_equal(np.unique(img), np.array([0,1])), "seg array must be 0s and 1s"
+    uniq=np.unique(img[by_channel])
+    assert np.array_equal(uniq, np.array([0,1])) or np.array_equal(uniq, np.array([1])), \
+           "the seg array in img[by_channel] must be 0s and 1s"
     assert img.ndim==dims+1, f"wrong number of dimensions for dims={dims}"
 
     # padding 
@@ -163,7 +166,7 @@ def center_img(img, dims=2, by_channel=1, method='center_mass',
     upper_bounds = np.array([c.max() for c in coords])
 
     if method=='center_mass':
-        properties=regionprops(img_to_center)
+        properties=measure.regionprops(np.array(img_to_center).astype(int))
         centroid = np.array(properties[0].centroid)
     elif method=='bbox':
         centroid = lower_bounds+(upper_bounds-lower_bounds)/2
@@ -172,7 +175,7 @@ def center_img(img, dims=2, by_channel=1, method='center_mass',
     # first compute how much we need to shift
     shape = np.array(img.shape[1:])
     midpoint = shape/2
-    shift = (midpoint-centroid).round().astype(np.int64)
+    shift = (midpoint-centroid).round().astype(np.int)
 
     # now roll
     roll_axis = (1,2) if dims==2 else (1,2,3)
@@ -230,14 +233,14 @@ def put_centered_imgs_to_standard_sz(all_slices_centered, all_cell_ids, sz=512,
     c=all_slices_centered[0].shape[0]
     assert all_slices_centered[0].ndim==1+dims
     
-    data=np.zeros((n,c,sz,sz), dtype=np.uint8)
-    data_cell_ids = np.zeros(n, dtype=np.int64)
+    data=np.zeros((n,c,sz,sz), dtype=np.float32)
     target_shape = np.array([sz]*dims)
 
     del_idxs=[]
     for i in range(n):
         big_flag=0
         img=all_slices_centered[i]
+
         shape = np.array(img.shape[1:])
 
         # if image is too big for requested size
@@ -259,10 +262,9 @@ def put_centered_imgs_to_standard_sz(all_slices_centered, all_cell_ids, sz=512,
         shape=img.shape[1:]
         gap = (target_shape - shape)//2
         slcs = [i, slice(0,len(img))] + [slice(gap[i], gap[i]+shape[i]) for i in range(len(gap))]
-
+        
         # copy the data
         data[tuple(slcs)] = img.copy()
-        data_cell_ids[i] = all_cell_ids[i]
 
         # if we have to do a crop, then the centroid of the remaining image will have moved, so we'd
         # fail this test. But we actually prefer not to move it (if you think about it)
@@ -273,9 +275,9 @@ def put_centered_imgs_to_standard_sz(all_slices_centered, all_cell_ids, sz=512,
     if not keep_too_big_cells:
         keep_idxs = ~np.isin(np.arange(n), del_idxs)
         data = data[keep_idxs]
-        data_cell_ids = data_cell_ids[keep_idxs]
+        all_cell_ids = all_cell_ids[keep_idxs]
 
-    return data, data_cell_ids
+    return data, all_cell_ids
 
 def combine_cell_nuclei_one_img(data):
     """
@@ -320,7 +322,7 @@ def build_dataset(data, data_cell_ids, meta_df, M0_only=0, do_plot=0,
         axs = axs.flatten()
         for i, stage in enumerate(stages):
             idxs = (cell_stages==stage)
-            samples = torch.from_numpy(data_samples_plot)[idxs][:nrows**2]
+            samples = torch.Tensor(data)[idxs][:nrows**2]
             grid = make_grid(samples, nrows)[0]
             axs[i].imshow(grid, cmap='gray')
             axs[i].set(title=f"{stage}, {idxs.sum()}")
@@ -331,10 +333,13 @@ def build_dataset(data, data_cell_ids, meta_df, M0_only=0, do_plot=0,
 
     # filter if required
     if M0_only:
-        idxs = (cell_stages=="M0")
+        idxs = np.where(cell_stages=="M0")[0]
+
     else:
         idxs=np.arange(len(cell_stages))
+    idxs = idxs.astype(int)
     data_filtered = torch.from_numpy(data)[idxs]
+    data_cell_ids = np.array(data_cell_ids)
     data_cell_ids_filtered = torch.from_numpy(data_cell_ids[idxs])
     cell_stages_filtered = cell_stages[idxs]
 
@@ -343,4 +348,93 @@ def build_dataset(data, data_cell_ids, meta_df, M0_only=0, do_plot=0,
 
     return (data_filtered, data_cell_ids_filtered, cell_stages_filtered), f
 
+
+def get_cell_data(fnames):
+    """
+    TODO: there's crossover functionality with build_dataset
+
+    For single cells with nucleus mask channel 0 and cell mask channel 1, 
+    and then the remaining channels can be whatever. 
+
+    Create dataset for single cell modeling from  given data generated for a 
+    stingl structure in `get_structure_single_cells()` (like mito). 
+    Expected shape of each image will be (z,y,x,6), where there are 6 structures split over 
+    the last channel. 
+    Do image centering as well. 
+    
+    No resizing occurs here, and therefore no interpolation artifacts should form. 
+    """
+    all_imgs_slices, all_cell_ids = [], []
+    t = tqdm.tqdm(fnames)
+    for num, f in enumerate(t):
+        t.set_description(f"FOV count={num+1}, Cell count={len(all_cell_ids)}, virtual memory: {psutil.virtual_memory().percent}%")
+        # load the crop data 
+        imgs, cellids = np.load(f, allow_pickle=1)
+        for i, img in enumerate(imgs):
+            # shift the channel order
+            img_ = np.moveaxis(img,3,1)
+            # find the slice
+            max_nucleus_idx = np.argmax(img_.sum(-1).sum(-1)[:,0])
+            img_slice = img_[max_nucleus_idx]
+            # center
+            img_slice = center_img(img_slice, by_channel=1)
+            # append the updated thing 
+            all_imgs_slices.append(img_slice)
+            all_cell_ids.append(cellids[i])
+
+    # now put everything on the same image size and make a tensor out of it
+    data_cells, data_cell_ids = put_centered_imgs_to_standard_sz(all_imgs_slices, all_cell_ids,sz=512)
+    data_cells, data_cell_ids = torch.Tensor(data_cells), torch.Tensor(data_cell_ids).long()
+    
+    return data_cells, data_cell_ids
+
+def get_structure_dataset_from_single_cell(data_cells, data_cell_ids, sz=64, min_size=10):
+    n_cells = len(data_cells)
+
+    t = tqdm.tqdm(range(n_cells))
+    data_mito_all, data_mito_labels_all = [], [] 
+    for i in t:
+        n_structure = sum([len(d) for d in data_mito_all])
+        t.set_description(f"Structures count {n_structure}. Virtual memory: {psutil.virtual_memory().percent}%, ")
+        cellid = data_cell_ids[i].item()
+        img_structure_seg = data_cells[i,2]
+        img_structure_raw = data_cells[i,5]
+
+        structure_mask = measure.label(img_structure_seg, connectivity=1)
+        all_structures_crop, all_structures_labels = [], []
+        for l in np.unique(structure_mask)[1:]:
+            object_seg = np.zeros_like(structure_mask)
+            object_seg[structure_mask==l]=1
+
+            object_raw = img_structure_raw*object_seg # object_seg acts like a 1's mask 
+            # get the crop bounds 
+            coords = np.argwhere(object_seg)
+            l0, l1 = coords.min(0)
+            u0, u1 = coords.max(0)
+
+            crop_seg = object_seg[l0:u0+1, l1:u1+1]
+            crop_raw = object_raw[l0:u0+1, l1:u1+1]
+            # crop = np.expand_dims(crop_seg, 0)
+            crop=np.stack((crop_seg, crop_raw), 0)
+            # centering based on the seg mask in channel 0 
+            crop = center_img(crop, by_channel=0, dims=2)
+
+            if crop[0].sum()<min_size:
+                continue
+            label = [cellid, l0, l1, u0, u1]
+
+            all_structures_crop.append(crop)
+            all_structures_labels.append(label)
+
+        if len(all_structures_crop)==0: continue
+        data_mito, data_mito_labels = put_centered_imgs_to_standard_sz(all_structures_crop, all_structures_labels, sz=64, by_channel=0)
+        data_mito, data_mito_labels = torch.Tensor(data_mito), torch.Tensor(data_mito_labels).long()
+
+        data_mito_all.append(data_mito)
+        data_mito_labels_all.append(data_mito_labels)
+
+    data_mito_all = torch.cat(data_mito_all)
+    data_mito_labels_all = torch.cat(data_mito_labels_all)
+    
+    return data_mito_all, data_mito_labels_all
 

@@ -159,11 +159,10 @@ def seg_2d(img_in, seg_config, seg_funcs, ch_name='mito', inplace=False,
     if np.sum(mask)==0:
         return np.zeros(mask.shape) # special case the mask is all zeros
 
-    channel_name_list = ['mito','peroxy','lyso','er','golgi']
+    channel_name_list = ['mito','peroxy','lyso','er','golgi','nuclei','bodipy']
     assert ch_name in channel_name_list
     assert img.ndim==2, "Input shape must be YX"
     img = np.expand_dims(img, 0) # since aics seg assumes TYX input
-
     
     # prepare document for 'save_inters'
     inter_imgs = OrderedDict()
@@ -191,7 +190,6 @@ def seg_2d(img_in, seg_config, seg_funcs, ch_name='mito', inplace=False,
 
     if save_inters: return img, inter_imgs
     else: return img
-
     
 def seg_2d_timelapse_by_channel(img_in, *args, ch_name=None, inplace=False, **kwargs):
     """
@@ -206,7 +204,7 @@ def seg_2d_timelapse_by_channel(img_in, *args, ch_name=None, inplace=False, **kw
         img[[i]] = seg_2d(img[i], *args, ch_name=ch_name, **kwargs, inplace=inplace)
     return img
 
-def seg_2d_timelapse(img_in, *args, order_channels=['golgi', 'er','lyso', 'mito', 'peroxy'],
+def seg_2d_timelapse(img_in, *args, order_channels=['golgi', 'er','lyso', 'mito', 'peroxy','nuclei','bodipy'],
                     verbose=0, inplace=True , **kwargs):
     """
     Input is TCYX

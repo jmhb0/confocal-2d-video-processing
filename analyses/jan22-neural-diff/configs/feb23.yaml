@@ -1,0 +1,145 @@
+---
+mito:
+    seg: 
+        pipeline: 
+            AC: 
+                scaling_param: [0,19]
+            #G2:
+            #    sigma: 0.7
+            ES:
+                niter: 3
+                kappa: 1.2
+            or_branch:
+                branch1:
+                    S2:
+                        s2_param: [[2,0.15], [3.3,0.15]]  
+                branch2:
+                    F2:
+                        f2_param: [[1.2,0.50]] 
+                        #f2_param: [[1.0,0.50],[3.3,0.35]] 
+
+            S:
+                min_size: 20
+        ops: 
+            inplace: False
+
+peroxy:
+    seg: 
+        pipeline: 
+            AC: 
+                scaling_param: [0,20]
+            G2:
+                sigma: 0.7
+            S2: 
+                s2_param: [[1.45,0.1]]
+            #WD: {}
+            S:
+                min_size: 10
+                connectivity: 1
+        ops: 
+            inplace: False
+
+lyso:
+    seg:
+        pipeline:
+            AC: 
+                scaling_param: [0,17]
+            G2:
+                sigma: 1
+            or_branch:
+                branch1:
+                    S2:
+                        s2_param: [[6,0.15]]  # [[2,0.1], [0.8,0.1]] 
+                branch2:
+                    F2:
+                        f2_param: [[1.6, 0.5]]
+            HF:
+                hole_min: 0
+                hole_max: 1200
+            S:
+                min_size: 20
+                connectivity: 1
+        ops: 
+            inplace: False
+
+golgi: 
+    seg:
+        pipeline:
+            AC:
+                scaling_param: [0,100]
+            G2:
+                sigma: 1.5
+            or_branch:
+                branch1:
+                    MO:
+                        global_thresh_method: tri # one of median,median, ave_tri_med
+                        object_minArea: 1200
+                        #extra_criteria: True
+                    TT: 
+                        min_thickness: 3
+                        thin: 1
+                branch2:
+                    S2:
+                        s2_param: [[1.8 ,0.02]]
+            S:
+                min_size: 20
+                connectivity: 1
+        ops: 
+            inplace: False
+
+er:
+    seg:
+        pipeline:
+            AC:
+                scaling_param: [0.5,11]
+            ES:
+                niter: 15    #
+                kappa: 1.2 
+                gamma: 0.1
+            #ES_aics: 
+            #    spacing: [1,1]
+            F2:
+                f2_param: [[1.4,0.15]]
+            S:
+                min_size: 20
+                connectivity: 1
+        ops: 
+            inplace: False
+nuclei:
+    seg: 
+        pipeline: 
+            AC: 
+                scaling_param: [0,15]
+            G2:
+                sigma: 3.5
+            MO: 
+                object_minArea: 1000
+                global_thresh_method: ave_tri_med # tri, med, ave_tri_med
+            HF: 
+                hole_min: 0
+                hole_max: 1200
+            #WD: {}
+            S:
+                min_size: 200
+                connectivity: 1
+        ops: 
+            inplace: False
+bodipy:
+    seg: 
+        pipeline: 
+            AC: 
+                scaling_param: [0,20]
+            G2:
+                sigma: 1.3
+            S2: 
+            #    s2_param: [[1.5,0.1], [3,0.1]]
+                s2_param: [[1.5,0.1], [3,0.1]]
+            #WD: {}
+            S:
+                min_size: 2
+                connectivity: 1
+            HF: 
+                hole_min: 0
+                hole_max: 400
+        ops: 
+            inplace: False

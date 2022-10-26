@@ -208,12 +208,11 @@ def download_cell_nucleus_seg_fovs(dir_fovs="/pasteur/data/allen_single_cell_ima
         local_fn = os.path.join(dir_fovs, f"fov_seg_{row.FOVId}.tiff")
         pkg[subdir_name][file_name].fetch(local_fn)
 
-def get_mito_single_cells():
+def get_structure_single_cells(dir_data_out = "/pasteur/data/allen_single_cell_image_dataset/mito_samples/mito_single_cells", 
+                         sturcure_name="TOMM20"):
     # below, all the instances of "structure" mean some organelle depending on "structure_name"
-    structure_name="TOMM20"
 
     # data directories
-    dir_data_out = "/pasteur/data/allen_single_cell_image_dataset/mito_samples/mito_single_cells"
     d_structures = "/pasteur/data/allen_single_cell_image_dataset/mito_samples/structure_segmentation"
     d_structure_raw = "/pasteur/data/allen_single_cell_image_dataset/mito_samples/raw_image"
     d_fov_segs = "/pasteur/data/allen_single_cell_image_dataset/cell-nucleus-segs/fovs"
@@ -238,6 +237,7 @@ def get_mito_single_cells():
 
     df_structure=meta_df.query(f"structure_name=='{structure_name}'")
     print(f"Unique FOVS with this structure {structure_name} is: {len(df_structure.FOVId.unique())}")
+    print(f"Unique Cellids is {len(df_structure.CellId.unique())}")
     # get existing files 
     fs_m = os.listdir(d_structures)
     fs_f = os.listdir(d_fov_segs)
